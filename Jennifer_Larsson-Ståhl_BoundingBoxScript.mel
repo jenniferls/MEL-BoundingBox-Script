@@ -1,0 +1,124 @@
+{
+    string $bBoxWindow = "bBoxWindow";
+    if(`window -ex $bBoxWindow`){
+        deleteUI $bBoxWindow;
+    }
+    
+    window -title "Create Bounding Box" -width 400 -height 400 -sizeable false bBoxWindow;
+    
+    columnLayout;
+        frameLayout -collapsable true -label "Bounding Box Type";
+            columnLayout -width 400;
+            checkBox -label "Axis Aligned" bBoxAxisAligned;
+            radioButtonGrp -numberOfRadioButtons 2 -label "Bounding Box Type" -labelArray2 "Box" "Sphere" -select 2 selectType;
+            setParent ..;
+        setParent ..;
+    
+        frameLayout -collapsable true -label "Bounding Box Size";
+            columnLayout -width 400;
+            floatSliderGrp -label "Offset" -field on -min -50 -max 50 -fieldMinValue -50 -fieldMaxValue 50 -value 0 bBoxOffset;
+            setParent ..;
+        setParent ..;;
+    
+        frameLayout -collapsable true -label "Bounding Box Shader";
+            columnLayout -width 400;
+            checkBox -label "Create New Bounding Box Shader" bBoxCreateShader;
+            colorSliderGrp -label "Pick Color" bBoxColor;
+            floatSliderGrp -label "Transparency" -field on -min 0 -max 1 -fieldMinValue 0 -fieldMaxValue 1 -value 0.5 bBoxTransparency;
+            setParent ..;
+        setParent ..;
+    
+        frameLayout -collapsable true -label "Bounding Box Settings";
+            columnLayout -width 400;
+            checkBox -label "Parent Bounding Box with Mesh" bBoxParent;
+            checkBox -label "Lock Bounding Box Attributes" bBoxLockAttributes;
+            checkBox -label "Create Layer for Bounding Box" bBoxCreateLayer;
+            setParent ..;
+        setParent ..;
+    
+        rowLayout -numberOfColumns 3 -columnWidth3 50 50 50;
+        $command = ("deleteUI " + $bBoxWindow);
+        button -label "Create BBox" -w 100 -command "CreateBBox";
+        button -label "Undo" -w 100 -command undo;
+        button -w 100 -label "Close" -command $command;
+        setParent ..;
+    setParent ..;
+    showWindow;
+}
+proc CreateBBox(){
+    string $selected[] = selectedNodes();
+    float $rot[] = getAttr($selected[0] + ".rotate");
+    string $bBoxObj[] = {""};
+    xform -cp $selected[0]; //Centers pivot
+        
+    $getTypeOfBox = (`radioButtonGrp -q -select selectType`); //Decides which type of bounding box should be created
+    $getAxisAlign = (`checkBox -q -v bBoxAxisAligned`); //Should the BBox be axis aligned
+    if($getAxisAlign == 0 || $getTypeOfBox == 2){
+        xform -ro 0 0 0 $selected[0];
+    }
+        
+    //Gets info about bb
+    float $size[] = (`xform -q -bb $selected[0]`);
+    float $posX = ($size[3] + $size[0]) * 0.5;
+    float $posY = ($size[4] + $size[1]) * 0.5;
+    float $posZ = ($size[5] + $size[2]) * 0.5;
+        
+    $getOffset = (`floatSliderGrp -q -v bBoxOffset`); //Gets the offset
+    if($getTypeOfBox == 1){
+        $bBoxObj = (`polyCube -name ("bBox" + $selected[0])`);
+    //Sets the dimensions of the bounding box
+    xform -s (($size[3] - $size[0]) + $getOffset) (($size[4] - $size[1]) + $getOffset) (($size[5] - $size[2]) + $getOffset) $bBoxObj;
+    } else {
+        //Calculate longest line
+        float $a = ($size[5] - $size[2]); //depth of bb (z)
+        float $b = ($size[4] - $size[1]); //height of bb (y)
+        float $c = (`pow $a 2`) + (`pow $b 2`);
+        $c = sqrt($c); //Hypotenuse
+        $a = $c;
+        $b = ($size[3] - $size[0]); //width of bb (x)
+        float $bBoxRadius = (`pow $b 2`) + (`pow $a 2`);
+        $bBoxRadius = sqrt($bBoxRadius); //Actually the diametre
+            
+        $bBoxRadius *= 0.5; //This is the radius
+        $bBoxRadius += $getOffset; //Add offset
+        $bBoxObj = (`polySphere -radius $bBoxRadius -name ("bBox" + $selected[0])`); //Create the sphere
+    }
+        
+    move $posX $posY $posZ $bBoxObj; //Moves the bounding box into the correct position
+        
+    if($getAxisAlign == 0){ //Rotates everything back
+        xform -ro $rot[0] $rot[1] $rot[2] $selected[0];
+        xform -ro $rot[0] $rot[1] $rot[2] $bBoxObj;
+    } else if($getAxisAlign == 1 && $getTypeOfBox == 2){
+        xform -ro $rot[0] $rot[1] $rot[2] $selected[0];
+    }
+        
+    $getShader = (`checkBox -q -v bBoxCreateShader`);
+    if($getShader == 1){
+        $getColor = (`colorSliderGrp -q -rgb bBoxColor`);
+        $transparency = (`floatSliderGrp -q -v bBoxTransparency`);
+        $shaderName = (`shadingNode -asShader -name "bBoxShader" lambert`);
+        $shaderSGName = (`sets -renderable true -noSurfaceShader true -empty -name "bBoxShaderSG"`);
+        connectAttr -f ($shaderName + ".outColor") ($shaderSGName + ".surfaceShader");
+        setAttr($shaderName + ".transparency") -type double3 $transparency $transparency $transparency;
+        setAttr($shaderName + ".color") -type double3 $getColor[0] $getColor[1] $getColor[2];
+        sets -e -forceElement $shaderSGName $bBoxObj[0];
+    }
+        
+    $getCreateLayer = (`checkBox -q -v bBoxCreateLayer`);
+    if($getCreateLayer == 1){
+        createDisplayLayer -name "Bounding Box Layer" -number 1 -nr $bBoxObj[0];
+    }
+    
+    $getParent = (`checkBox -q -v bBoxParent`);
+    if($getParent == 1){
+        parent $bBoxObj[0] $selected[0];
+    }
+    
+    $getLockAttr = (`checkBox -q -v bBoxLockAttributes`);
+    if($getLockAttr == 1){
+        setAttr -lock on ($bBoxObj[0] + ".translate");
+        setAttr -lock on ($bBoxObj[0] + ".rotate");
+        setAttr -lock on ($bBoxObj[0] + ".scale");
+    }
+}
